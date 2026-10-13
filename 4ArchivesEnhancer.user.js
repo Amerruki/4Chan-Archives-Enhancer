@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         4chan Archives Enhancer
-// @version      0.96
+// @version      0.97
 // @namespace    4chan-archives-enhancer
 // @description  Enhancements for the main 4Chan Archive sites (archived.moe, thebarchive.com, archiveofsins.com)
 // @license      MIT
+// @homepageURL  https://github.com/amerruki/4Chan-Archives-Enhancer
+// @supportURL   https://github.com/amerruki/4Chan-Archives-Enhancer/issues
+// @updateURL    https://raw.githubusercontent.com/amerruki/4Chan-Archives-Enhancer/main/4ArchivesEnhancer.user.js
+// @downloadURL  https://raw.githubusercontent.com/amerruki/4Chan-Archives-Enhancer/main/4ArchivesEnhancer.user.js
 // @match        https://archived.moe/*
 // @match        https://thebarchive.com/*
 // @match        https://archiveofsins.com/*
@@ -26,7 +30,7 @@
 (function () {
   'use strict';
   // Deliberate boot log: single source of truth that the script was injected.
-  console.log('[4AE] v0.96 loaded on', location.href, 'readyState=', document.readyState);
+  console.log('[4AE] v0.97 loaded on', location.href, 'readyState=', document.readyState);
 
   // ═══════════════════════════════════════════════════════════════════════
   //  SETTINGS & STORAGE
@@ -35,7 +39,7 @@
   const SETTINGS_KEY = 'ffe_settings';
   const MD5_TRACK_KEY = 'ffe_tracked_md5s';
   const SAVED_THREADS_KEY = 'ffe_saved_threads';
-  const VERSION = '0.96';
+  const VERSION = '0.97';
 
   const DEFAULTS = {
     imageExpansion: true, fitWidth: true, fitHeight: true,
@@ -141,8 +145,22 @@
   let cfg = loadSettings();
 
   // MD5 storage
+  // FoolFuuka links carry the URL-safe base64 form of the hash ('/'→'_', '+'→'-', no '=' padding),
+  // while img[data-md5] carries raw base64. One image can therefore appear under two spellings;
+  // everything that reads, tracks, imports or compares a hash goes through this first.
+  function normalizeMD5(h) {
+    return String(h || '').trim().replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
   function loadTrackedMD5s() {
-    try { const r = GM_getValue(MD5_TRACK_KEY, '[]'); return new Set(typeof r === 'string' ? JSON.parse(r) : r); }
+    try {
+      const r = GM_getValue(MD5_TRACK_KEY, '[]');
+      const raw = typeof r === 'string' ? JSON.parse(r) : r;
+      const list = Array.isArray(raw) ? raw : [];
+      const set = new Set(list.map(normalizeMD5).filter(Boolean));
+      // One-time migration of hashes stored in raw form by earlier versions.
+      if (list.some(h => normalizeMD5(h) !== h)) GM_setValue(MD5_TRACK_KEY, JSON.stringify([...set]));
+      return set;
+    }
     catch (e) { console.warn('[4AE] storage read failed for', MD5_TRACK_KEY, '— falling back to defaults:', e); return new Set(); }
   }
   function saveTrackedMD5s() { GM_setValue(MD5_TRACK_KEY, JSON.stringify([...trackedMD5s])); }
@@ -286,8 +304,8 @@
     }
     .ffe-topbar-right a:hover { opacity: 1; }
     .ffe-topbar-right svg { width: 20px; height: 20px; }
-    body { padding-top: 34px !important; }
-    html { scroll-padding-top: 38px; }
+    :root.ffe-has-topbar body { padding-top: 34px !important; }
+    :root.ffe-has-topbar { scroll-padding-top: 38px; }
 
     /* Custom Board Nav (inside topbar-left) */
     .ffe-board-nav { font-size: 12px; display: flex; align-items: center; gap: 0; white-space: nowrap; }
@@ -659,10 +677,10 @@
   function getPostMD5(article) {
     // 1) Try View Same link
     const l = getPostSameLink(article);
-    if (l) { const m = l.href.match(/\/search\/image\/([^/]+)/); if (m) return m[1]; }
+    if (l) { const m = l.href.match(/\/search\/image\/([^/]+)/); if (m) { let h = m[1]; try { h = decodeURIComponent(h); } catch {} return normalizeMD5(h); } }
     // 2) Fallback: data-md5 on the image (works even when View Same is absent)
     const img = article.querySelector('img[data-md5]');
-    if (img?.dataset?.md5) return img.dataset.md5;
+    if (img?.dataset?.md5) return normalizeMD5(img.dataset.md5);
     return null;
   }
 
@@ -718,7 +736,10 @@
       case 'headerPinned':
         applyHeaderPinState(); return true;
       case 'topBarVisible':
-        document.querySelectorAll('.ffe-topbar').forEach(el => el.style.display = cfg.topBarVisible ? '' : 'none');
+        // Hidden at load means the bar was never built; a reload is needed to bring it back.
+        if (!headerControls) return false;
+        headerControls.style.display = cfg.topBarVisible ? '' : 'none';
+        doc.classList.toggle('ffe-has-topbar', cfg.topBarVisible);
         return true;
       case 'floatingPanelVisible':
         document.querySelectorAll('.ffe-float-panel').forEach(el => el.style.display = cfg.floatingPanelVisible ? '' : 'none');
@@ -873,7 +894,15 @@
   // ═══════════════════════════════════════════════════════════════════════
 
   function initImageHoverZoom() {
-    let hoverImg = null;
+    let hoverImg = null, hoverLink = null, hoverSeq = 0;
+    function clearHover() {
+      hoverSeq++; // invalidates any proxy load still in flight
+      if (hoverImg) {
+        if (hoverImg.dataset.ffeBlobUrl) URL.revokeObjectURL(hoverImg.dataset.ffeBlobUrl);
+        hoverImg.remove();
+      }
+      hoverImg = null; hoverLink = null;
+    }
     document.addEventListener('mouseover', (e) => {
       if (!cfg.imageHoverZoom) return;
       const link = e.target.closest('.thread_image_link');
@@ -881,27 +910,33 @@
       if (isBlockedExpansion) return;
       // Already expanded inline by the image-expansion feature — skip zoom (would duplicate).
       if (link.querySelector('.post_image.ffe-expanded, .thread_image.ffe-expanded')) return;
+      // Moving between children of the same link: keep the current preview.
+      if (hoverImg && hoverLink === link) return;
+      clearHover();
+      const seq = hoverSeq;
+      hoverLink = link;
       hoverImg = document.createElement('img');
       hoverImg.className = 'ffe-hover-zoom';
       document.body.appendChild(hoverImg);
       proxyLoadImage(link.href, (url, isBlob) => {
-        if (!hoverImg) { if (isBlob) URL.revokeObjectURL(url); return; }
+        // A newer hover (or a mouseout) superseded this request: drop the response.
+        if (seq !== hoverSeq || !hoverImg) { if (isBlob) URL.revokeObjectURL(url); return; }
         hoverImg.src = url;
         if (isBlob) hoverImg.dataset.ffeBlobUrl = url;
       });
     });
     document.addEventListener('mousemove', (e) => {
       if (!hoverImg) return;
-      if (!cfg.imageHoverZoom) {
-        if (hoverImg.dataset.ffeBlobUrl) URL.revokeObjectURL(hoverImg.dataset.ffeBlobUrl);
-        hoverImg.remove(); hoverImg = null; return;
-      }
+      if (!cfg.imageHoverZoom) { clearHover(); return; }
       hoverImg.style.left = Math.min(e.clientX + 20, window.innerWidth - hoverImg.offsetWidth - 10) + 'px';
       hoverImg.style.top = Math.min(e.clientY + 10, window.innerHeight - hoverImg.offsetHeight - 10) + 'px';
     });
     document.addEventListener('mouseout', (e) => {
-      if (!e.target.closest('.thread_image_link')) return;
-      if (hoverImg) { if (hoverImg.dataset.ffeBlobUrl) URL.revokeObjectURL(hoverImg.dataset.ffeBlobUrl); hoverImg.remove(); hoverImg = null; }
+      const link = e.target.closest('.thread_image_link');
+      if (!link) return;
+      // Still inside the same link (e.g. img → a): not a real leave.
+      if (e.relatedTarget && link.contains(e.relatedTarget)) return;
+      clearHover();
     });
   }
 
@@ -1272,7 +1307,8 @@
 
     const items = [
       { text: 'Copy MD5', action: () => { copyToClipboard(md5); dd.remove(); } },
-      { text: 'View Same (All Boards)', href: `https://archived.moe/_/search/image/${md5}/`, target: '_blank' },
+      { text: `View Same (All Boards on ${currentHost})`, href: `https://${currentHost}/_/search/image/${md5}/`, target: '_blank' },
+      ...(currentHost !== 'archived.moe' ? [{ text: 'View Same (archived.moe)', href: `https://archived.moe/_/search/image/${md5}/`, target: '_blank' }] : []),
       { text: `View Same (/${currentBoard}/)`, href: `/${currentBoard}/search/image/${md5}/`, target: '_blank' },
       { text: trackedMD5s.has(md5) ? 'Untrack MD5' : 'Track MD5', action: () => {
         trackedMD5s.has(md5) ? trackedMD5s.delete(md5) : trackedMD5s.add(md5);
@@ -1937,9 +1973,22 @@
   //  12. DOWNLOADS
   // ═══════════════════════════════════════════════════════════════════════
 
-  function downloadFile(url, filename) {
-    if (typeof GM_download === 'function') { GM_download({ url, name: filename, saveAs: false }); }
-    else { const a = document.createElement('a'); a.href = url; a.download = filename; a.target = '_blank'; document.body.appendChild(a); a.click(); a.remove(); }
+  // GM_download error codes that will repeat for every file in a batch (not transient).
+  const DOWNLOAD_HARD_ERRORS = new Set(['not_enabled', 'not_whitelisted', 'not_permitted', 'not_supported']);
+
+  function downloadFile(url, filename, onDone) {
+    const done = (err) => { if (onDone) onDone(err || null); };
+    if (typeof GM_download === 'function') {
+      GM_download({
+        url, name: filename, saveAs: false,
+        onload: () => done(null),
+        onerror: (err) => { console.warn('[4AE] download failed:', filename, err); done(err || { error: 'unknown' }); },
+        ontimeout: () => { console.warn('[4AE] download timed out:', filename); done({ error: 'timeout' }); },
+      });
+    } else {
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.target = '_blank'; document.body.appendChild(a); a.click(); a.remove();
+      done(null);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1970,17 +2019,47 @@
       } else {
         // Normal download
         dlBtn.appendChild(icons.download());
-        dlBtn.appendChild(document.createTextNode(' Download Thread Media'));
+        const dlLabel = document.createTextNode(' Download Thread Media');
+        dlBtn.appendChild(dlLabel);
+        let batchRunning = false;
         dlBtn.addEventListener('click', () => {
+          if (batchRunning) return;
           const entries = getAllMediaEntries();
           if (!entries.length) { alert('No images found.'); return; }
           if (!confirm(`Download ${entries.length} files (including OP)?`)) return;
-          let i = 0;
+          batchRunning = true;
+          const total = entries.length;
+          let started = 0, finished = 0, failed = 0, ended = false;
+          const finish = (abortMsg) => {
+            if (ended) return; ended = true;
+            batchRunning = false;
+            dlLabel.textContent = ' Download Thread Media';
+            if (abortMsg) alert(abortMsg);
+            else if (failed) alert(`Batch finished: ${total - failed}/${total} downloaded, ${failed} failed (see console).`);
+          };
+          // Same cadence as before (one start every batchDownloadDelay ms, downloads overlap),
+          // but every result is tracked and a hard error stops the batch instead of failing silently.
           (function next() {
-            if (i >= entries.length) return;
-            downloadFile(entries[i].url, entries[i].filename);
-            i++;
-            if (i < entries.length) setTimeout(next, cfg.batchDownloadDelay);
+            if (ended || started >= total) return;
+            const entry = entries[started++];
+            dlLabel.textContent = ` Downloading ${started}/${total}\u2026`;
+            downloadFile(entry.url, entry.filename, (err) => {
+              finished++;
+              if (err) {
+                failed++;
+                if (DOWNLOAD_HARD_ERRORS.has(err.error)) {
+                  finish(`Download stopped at file ${started}/${total}: ${err.error}. ` +
+                    (err.error === 'not_whitelisted'
+                      ? 'Add the file extension (e.g. webm) to Tampermonkey\u2019s download whitelist under Settings \u2192 Downloads.'
+                      : 'Check the userscript manager\u2019s download settings.'));
+                  return;
+                }
+              }
+              if (finished >= total) finish();
+            });
+            if (started < total) setTimeout(next, cfg.batchDownloadDelay);
+            // Safety net: a manager that never reports completion must not leave the button stuck.
+            else setTimeout(() => finish(), 120000);
           })();
         });
       }
@@ -2326,7 +2405,7 @@
           // Support both old format (flat settings) and new format (with sections)
           if (data.settings) {
             Object.assign(cfg, {...DEFAULTS, ...data.settings}); saveSettings(cfg);
-            if (data.trackedMD5s?.length) { trackedMD5s = new Set(data.trackedMD5s); saveTrackedMD5s(); }
+            if (data.trackedMD5s?.length) { trackedMD5s = new Set(data.trackedMD5s.map(normalizeMD5).filter(Boolean)); saveTrackedMD5s(); }
             if (data.savedThreads?.length) { savedThreadsList = data.savedThreads; saveSavedThreads(); }
             statusEl.textContent = 'Imported all data! Reload to apply.';
           } else {
@@ -2377,9 +2456,9 @@
         const entry = document.createElement('div'); entry.className = 'ffe-md5-entry';
         const span = document.createElement('span'); span.textContent = hash;
         const search = document.createElement('a');
-        search.href = `https://archived.moe/_/search/image/${hash}/`;
+        search.href = `https://${currentHost}/_/search/image/${hash}/`;
         search.target = '_blank'; search.rel = 'noopener';
-        search.title = 'Search on archived.moe';
+        search.title = `Search on ${currentHost}`;
         search.appendChild(icons.search());
         const rm = document.createElement('a'); rm.textContent = '\u00d7'; rm.title = 'Remove';
         rm.addEventListener('click', () => { trackedMD5s.delete(hash); saveTrackedMD5s(); highlightTrackedPosts(); refresh(); });
@@ -2397,7 +2476,7 @@
     const addInput = document.createElement('input'); addInput.placeholder = 'Paste MD5 hash (base64)...';
     const addBtn = document.createElement('button'); addBtn.textContent = 'Add';
     addBtn.addEventListener('click', () => {
-      const v = addInput.value.trim(); if (!v) return;
+      const v = normalizeMD5(addInput.value); if (!v) return;
       trackedMD5s.add(v); saveTrackedMD5s(); highlightTrackedPosts(); addInput.value = ''; refresh();
     });
     addRow.appendChild(addInput); addRow.appendChild(addBtn);
@@ -2414,7 +2493,7 @@
     bulkBtn.textContent = 'Import All';
     bulkBtn.style.cssText = 'margin-top:4px;background:#373b41;border:1px solid #555;color:#c5c8c6;padding:3px 10px;cursor:pointer;font-size:12px;';
     bulkBtn.addEventListener('click', () => {
-      const lines = bulkArea.value.split(/[\n\r]+/).map(l => l.trim()).filter(l => l.length > 0);
+      const lines = bulkArea.value.split(/[\n\r]+/).map(normalizeMD5).filter(l => l.length > 0);
       if (!lines.length) return;
       let added = 0;
       for (const line of lines) {
@@ -2465,7 +2544,7 @@
           const arr = Array.isArray(data) ? data : (Array.isArray(data.trackedMD5s) ? data.trackedMD5s : null);
           if (!arr) { statusSpan.textContent = 'No "trackedMD5s" array found.'; statusSpan.style.color = '#cc6666'; return; }
           let added = 0;
-          for (const h of arr) { if (typeof h === 'string' && h && !trackedMD5s.has(h)) { trackedMD5s.add(h); added++; } }
+          for (const raw of arr) { const h = typeof raw === 'string' ? normalizeMD5(raw) : ''; if (h && !trackedMD5s.has(h)) { trackedMD5s.add(h); added++; } }
           saveTrackedMD5s(); highlightTrackedPosts(); refresh();
           statusSpan.textContent = `Imported ${added} new hash${added === 1 ? '' : 'es'}.`;
           statusSpan.style.color = '#b5bd68';
@@ -2540,6 +2619,7 @@
 
     headerControls.appendChild(topbarRight);
     document.body.appendChild(headerControls);
+    doc.classList.add('ffe-has-topbar');
 
     applyHeaderPinState();
   }
@@ -2557,7 +2637,10 @@
     if (!cfg.keyboardNav) return;
     document.addEventListener('keydown', (e) => {
       if (Gallery.handleKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
-      const inInput = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
+      // Never hijack browser/OS chords (Cmd+F find, Cmd+O open, Ctrl+G, …).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const ae = document.activeElement;
+      const inInput = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable);
       if (inInput) return;
       const key = e.key.toLowerCase();
       if (key === cfg.settingsKey.toLowerCase()) { e.preventDefault(); document.getElementById('ffe-overlay') ? closeSettings() : openSettings(); return; }
