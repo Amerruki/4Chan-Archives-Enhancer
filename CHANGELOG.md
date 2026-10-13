@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.99 (13/10/2026)
+
+- The hide-non-image-posts display mode is now called Image-Only Mode everywhere: settings labels, the header indicator (now "I"), CSS classes and settings keys. Existing preferences and backups carry over on first load.
+
 ## 0.98 (13/10/2026)
 
 - Archive host table is data plus a user override field (Settings → Routing → Board Host Overrides, `board=host` pairs, `board=default` undoes a built-in). Every place that assumed archived.moe now reads the table.
