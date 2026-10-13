@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         4chan Archives Enhancer
-// @version      0.97
+// @version      0.98
 // @namespace    4chan-archives-enhancer
-// @description  Enhancements for the main 4Chan Archive sites (archived.moe, thebarchive.com, archiveofsins.com)
+// @description  Enhancements for FoolFuuka 4chan archives (archived.moe, thebarchive.com, archiveofsins.com, desuarchive.org, 4plebs)
 // @license      MIT
 // @homepageURL  https://github.com/amerruki/4Chan-Archives-Enhancer
 // @supportURL   https://github.com/amerruki/4Chan-Archives-Enhancer/issues
@@ -14,15 +14,22 @@
 // @match        https://www.archived.moe/*
 // @match        https://www.thebarchive.com/*
 // @match        https://www.archiveofsins.com/*
+// @match        https://desuarchive.org/*
+// @match        https://www.desuarchive.org/*
+// @match        https://archive.4plebs.org/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_download
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
+// @connect      archived.moe
 // @connect      thebarchive.com
 // @connect      archiveofsins.com
-// @connect      archived.moe
+// @connect      desuarchive.org
+// @connect      desu-usergeneratedcontent.xyz
+// @connect      archive.4plebs.org
+// @connect      i.4pcdn.org
 // @connect      *
 // @run-at       document-start
 // ==/UserScript==
@@ -30,7 +37,7 @@
 (function () {
   'use strict';
   // Deliberate boot log: single source of truth that the script was injected.
-  console.log('[4AE] v0.97 loaded on', location.href, 'readyState=', document.readyState);
+  console.log('[4AE] v0.98 loaded on', location.href, 'readyState=', document.readyState);
 
   // ═══════════════════════════════════════════════════════════════════════
   //  SETTINGS & STORAGE
@@ -39,7 +46,7 @@
   const SETTINGS_KEY = 'ffe_settings';
   const MD5_TRACK_KEY = 'ffe_tracked_md5s';
   const SAVED_THREADS_KEY = 'ffe_saved_threads';
-  const VERSION = '0.97';
+  const VERSION = '0.98';
 
   const DEFAULTS = {
     imageExpansion: true, fitWidth: true, fitHeight: true,
@@ -67,6 +74,7 @@
     autoRedirectCrossArchive: true,
     autoRedirectClickIntercept: true,
     redirectExceptions: '',
+    customBoardHosts: '',
     showViewOriginalLinks: true,
     md5DropdownMenu: true,
     floatingPanelVisible: true,
@@ -121,10 +129,11 @@
 
     md5DropdownMenu:   { section: 'General', label: 'MD5 Dropdown Menu',     desc: 'Show the MD5 menu button on posts (requires MD5 Tracking)' },
 
-    autoRedirectCrossArchive:   { section: 'Routing', label: 'Auto-Redirect Cross-Archive Boards', desc: 'When you land on archived.moe for a board hosted elsewhere, redirect to the correct host' },
-    autoRedirectClickIntercept: { section: 'Routing', label: 'Intercept Cross-Archive Link Clicks', desc: 'Rewrite clicks on archived.moe links pointing to cross-hosted boards' },
-    redirectExceptions:         { section: 'Routing', label: 'Exception Boards', desc: 'Comma-separated boards to keep on archived.moe (e.g. b,s)', type: 'text-wide' },
-    showViewOriginalLinks:      { section: 'Routing', label: 'Show "View Original" Corner Links', desc: 'Floating link to the original board on 4chan' },
+    autoRedirectCrossArchive:   { section: 'Routing', label: 'Auto-Redirect Cross-Archive Boards', desc: 'When you land on the default archive for a board hosted elsewhere, redirect to the correct host' },
+    autoRedirectClickIntercept: { section: 'Routing', label: 'Intercept Cross-Archive Link Clicks', desc: 'Rewrite clicks on default-archive links pointing to cross-hosted boards' },
+    redirectExceptions:         { section: 'Routing', label: 'Exception Boards', desc: 'Comma-separated boards to keep on the default archive (e.g. b,s)', type: 'text-wide' },
+    customBoardHosts:           { section: 'Routing', label: 'Board Host Overrides', desc: 'board=host pairs, comma-separated (e.g. a=desuarchive.org, pol=archive.4plebs.org). "board=default" undoes a built-in entry', type: 'text-wide' },
+    showViewOriginalLinks:      { section: 'Routing', label: 'Show "View Original" Corner Links', desc: 'Corner link from a cross-hosted board on the default archive to the archive that actually hosts it' },
 
     topBarVisible:        { section: 'Visibility', label: 'Show Top Bar',                desc: 'Show the script’s top bar (cog, board nav, saved threads)' },
     floatingPanelVisible: { section: 'Visibility', label: 'Show Floating Panel',         desc: 'Show the floating side panel on thread pages' },
@@ -602,15 +611,36 @@
   const currentBoard = (location.pathname.match(/^\/([^/]+)/) || [])[1] || '';
   const currentHost = location.hostname.replace(/^www\./, '');
 
-  // Cross-archive routing
-  const BOARD_HOSTS = {
+  // Cross-archive routing.
+  // DEFAULT_HOST serves most boards. BUILTIN_BOARD_HOSTS lists the boards it does NOT serve and the
+  // archive that does; the user can extend or undo it from Settings → Routing → Board Host Overrides.
+  const DEFAULT_HOST = 'archived.moe';
+  const BUILTIN_BOARD_HOSTS = {
     b: 'thebarchive.com',
     s: 'archiveofsins.com', hc: 'archiveofsins.com', h: 'archiveofsins.com',
     hm: 'archiveofsins.com', i: 'archiveofsins.com', lgbt: 'archiveofsins.com',
     r: 'archiveofsins.com', soc: 'archiveofsins.com', t: 'archiveofsins.com', u: 'archiveofsins.com',
   };
+  // "a=desuarchive.org, pol=archive.4plebs.org, b=default" → { a: 'desuarchive.org', pol: '…', b: null }
+  function parseBoardHostOverrides(str) {
+    const out = {};
+    String(str || '').split(',').forEach(pair => {
+      const eq = pair.indexOf('='); if (eq < 0) return;
+      const b = pair.slice(0, eq).trim().toLowerCase();
+      let h = pair.slice(eq + 1).trim().toLowerCase();
+      if (!b || !h) return;
+      h = h.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+      out[b] = h === 'default' ? null : h;
+    });
+    return out;
+  }
+  const BOARD_HOSTS = { ...BUILTIN_BOARD_HOSTS };
+  for (const [b, h] of Object.entries(parseBoardHostOverrides(cfg.customBoardHosts))) {
+    if (h) BOARD_HOSTS[b] = h; else delete BOARD_HOSTS[b];
+  }
   const CROSS_HOSTED_BOARDS = Object.keys(BOARD_HOSTS);
-  const isBlockedExpansion = currentHost === 'archived.moe' && CROSS_HOSTED_BOARDS.includes(currentBoard);
+  function boardHost(board) { return BOARD_HOSTS[board] || DEFAULT_HOST; }
+  const isBlockedExpansion = currentHost === DEFAULT_HOST && CROSS_HOSTED_BOARDS.includes(currentBoard);
 
   function redirectExceptionList() {
     return String(cfg.redirectExceptions || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -618,7 +648,7 @@
 
   // Module-scope: run BEFORE bootstrap so we don't waste init work on a page that's about to navigate.
   function redirectIfCrossArchive() {
-    if (currentHost !== 'archived.moe') return false;
+    if (currentHost !== DEFAULT_HOST) return false;
     if (!cfg.autoRedirectCrossArchive) return false;
     const targetHost = BOARD_HOSTS[currentBoard];
     if (!targetHost || targetHost === currentHost) return false;
@@ -630,7 +660,7 @@
   if (redirectIfCrossArchive()) return;
 
   function getBoardUrl(board) {
-    const host = BOARD_HOSTS[board] || 'archived.moe';
+    const host = boardHost(board);
     return host === currentHost ? `/${board}/` : `https://${host}/${board}/`;
   }
 
@@ -847,7 +877,7 @@
       const href = link.href || '';
       if (/\.(webm|mp4)$/i.test(href)) return;
 
-      // On blocked boards (archived.moe + /b/,/s/,/hc/), completely skip — no expansion
+      // On blocked boards (default host + a cross-hosted board such as /b/,/s/,/hc/), completely skip — no expansion
       if (isBlockedExpansion) return;
 
       e.preventDefault();
@@ -1308,7 +1338,7 @@
     const items = [
       { text: 'Copy MD5', action: () => { copyToClipboard(md5); dd.remove(); } },
       { text: `View Same (All Boards on ${currentHost})`, href: `https://${currentHost}/_/search/image/${md5}/`, target: '_blank' },
-      ...(currentHost !== 'archived.moe' ? [{ text: 'View Same (archived.moe)', href: `https://archived.moe/_/search/image/${md5}/`, target: '_blank' }] : []),
+      ...(currentHost !== DEFAULT_HOST ? [{ text: `View Same (${DEFAULT_HOST})`, href: `https://${DEFAULT_HOST}/_/search/image/${md5}/`, target: '_blank' }] : []),
       { text: `View Same (/${currentBoard}/)`, href: `/${currentBoard}/search/image/${md5}/`, target: '_blank' },
       { text: trackedMD5s.has(md5) ? 'Untrack MD5' : 'Track MD5', action: () => {
         trackedMD5s.has(md5) ? trackedMD5s.delete(md5) : trackedMD5s.add(md5);
@@ -1408,6 +1438,56 @@
     if (target) target.appendChild(savedLink);
   }
 
+  // FoolFuuka JSON API: /_/api/chan/thread/?board=X&num=N → { "N": { op: { title, comment, … }, posts: {…} } }
+  function fetchThreadTitle(host, board, num, cb) {
+    if (typeof GM_xmlhttpRequest !== 'function') { cb(null); return; }
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: `https://${host}/_/api/chan/thread/?board=${encodeURIComponent(board)}&num=${encodeURIComponent(num)}`,
+      headers: { Accept: 'application/json' },
+      timeout: 15000,
+      onload: (resp) => {
+        try {
+          if (resp.status < 200 || resp.status >= 300) { cb(null); return; }
+          const data = JSON.parse(resp.responseText);
+          const op = data?.[String(num)]?.op;
+          if (!op) { cb(null); return; }
+          let title = String(op.title || '').trim();
+          if (!title && op.comment) title = String(op.comment).replace(/\s+/g, ' ').trim().substring(0, 80);
+          if (!title && op.comment_processed) {
+            // DOMParser documents are inert: no scripts run and no images load while parsing.
+            const d = new DOMParser().parseFromString(String(op.comment_processed), 'text/html');
+            title = (d.body.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80);
+          }
+          cb(title || null);
+        } catch (e) { console.warn('[4AE] thread title lookup failed:', e); cb(null); }
+      },
+      onerror: () => cb(null),
+      ontimeout: () => cb(null),
+    });
+  }
+
+  // Replace placeholder titles ("Thread #123", left by bulk import or manual add) with the real OP
+  // title from the archive's JSON API. A few per dropdown open, each URL tried once per page load.
+  const _titleFetchTried = new Set();
+  function refreshSavedTitles(onUpdated) {
+    const pending = savedThreadsList
+      .filter(t => /^Thread #\d+$/.test(t.title || '') && !_titleFetchTried.has(t.url))
+      .slice(0, 6);
+    if (!pending.length) return;
+    let changed = false, left = pending.length;
+    const settle = () => { if (--left === 0 && changed) { saveSavedThreads(); onUpdated(); } };
+    for (const t of pending) {
+      _titleFetchTried.add(t.url);
+      const num = (t.url || '').match(/\/thread\/(\d+)/)?.[1];
+      if (!num || !t.board) { settle(); continue; }
+      fetchThreadTitle(boardHost(t.board), t.board, num, (title) => {
+        if (title && savedThreadsList.includes(t)) { t.title = title; changed = true; }
+        settle();
+      });
+    }
+  }
+
   function toggleSavedDropdown(anchor) {
     const existing = document.querySelector('.ffe-saved-dropdown');
     if (existing) { existing.remove(); return; }
@@ -1455,10 +1535,9 @@
 
           // Smart redirect: rewrite URL domain based on board
           const link = document.createElement('a');
-          const boardHost = BOARD_HOSTS[t.board] || 'archived.moe';
           try {
             const parsed = new URL(t.url);
-            parsed.hostname = boardHost;
+            parsed.hostname = boardHost(t.board);
             link.href = parsed.toString();
           } catch {
             link.href = t.url;
@@ -1512,11 +1591,12 @@
         else if (shortM) { board = shortM[1]; threadId = shortM[2]; }
         else if (pathM) { board = pathM[1]; threadId = pathM[2]; }
         else { addInput.style.borderColor = '#cc6666'; return; }
-        const host = BOARD_HOSTS[board] || 'archived.moe';
+        const host = boardHost(board);
         const url = `https://${host}/${board}/thread/${threadId}/`;
         if (savedThreadsList.some(t => t.url === url)) { addInput.value = ''; return; }
         savedThreadsList.unshift({ url, title: `Thread #${threadId}`, board, addedAt: new Date().toISOString() });
         saveSavedThreads(); addInput.value = ''; render();
+        refreshSavedTitles(() => { if (dd.isConnected) render(); });
       });
       addRow.appendChild(addInput); addRow.appendChild(addBtn);
       dd.appendChild(addRow);
@@ -1529,7 +1609,7 @@
         const exportBtn = document.createElement('a'); exportBtn.textContent = 'Export';
         exportBtn.addEventListener('click', () => {
           const lines = savedThreadsList.map(t => {
-            const host = BOARD_HOSTS[t.board] || 'archived.moe';
+            const host = boardHost(t.board);
             return `https://${host}/${t.board}/thread/${t.url.match(/\/thread\/(\d+)/)?.[1] || ''}/ # ${t.title}`;
           });
           const blob = new Blob([lines.join('\n')], {type:'text/plain'});
@@ -1565,13 +1645,13 @@
             else if (chanM) { board = chanM[1]; threadId = chanM[2]; }
             else if (shortM) { board = shortM[1]; threadId = shortM[2]; }
             else continue;
-            const host = BOARD_HOSTS[board] || 'archived.moe';
+            const host = boardHost(board);
             url = `https://${host}/${board}/thread/${threadId}/`;
             if (savedThreadsList.some(t => t.url === url)) continue;
             savedThreadsList.unshift({ url, title: `Thread #${threadId}`, board, addedAt: new Date().toISOString() });
             added++;
           }
-          if (added > 0) { saveSavedThreads(); render(); }
+          if (added > 0) { saveSavedThreads(); render(); refreshSavedTitles(() => { if (dd.isConnected) render(); }); }
           statusMsg.textContent = added > 0 ? `Added ${added} thread${added > 1 ? 's' : ''}.` : 'No new threads to add.';
           statusMsg.style.color = added > 0 ? '#b5bd68' : '#888';
         });
@@ -1589,6 +1669,7 @@
     }
     render();
     document.body.appendChild(dd);
+    refreshSavedTitles(() => { if (dd.isConnected) render(); });
 
     // Only close when clicking the bookmark icon again (not on outside click)
     // This keeps the dropdown persistent while adding threads
@@ -1646,7 +1727,7 @@
 
   function initViewOriginalBoard() {
     if (!cfg.showViewOriginalLinks) return;
-    // Only on archived.moe thread pages for cross-hosted boards
+    // Only on default-host thread pages for cross-hosted boards
     if (!isThreadPage || !isBlockedExpansion) return;
 
     const canonicalHost = BOARD_HOSTS[currentBoard];
@@ -1682,14 +1763,15 @@
   // Page-load redirect runs at module scope via redirectIfCrossArchive().
   // This init only handles same-session click interception.
   function initCrossArchiveRedirect() {
-    if (currentHost !== 'archived.moe') return;
+    if (currentHost !== DEFAULT_HOST) return;
+    const hostRe = new RegExp('^https?://(?:www\\.)?' + DEFAULT_HOST.replace(/\./g, '\\.') + '/([^/]+)(/.*)?$');
 
     document.addEventListener('click', (e) => {
       if (!cfg.autoRedirectClickIntercept) return;
       const a = e.target.closest('a[href]');
       if (!a) return;
       const href = a.href;
-      const m = href.match(/^https?:\/\/(?:www\.)?archived\.moe\/([^/]+)(\/.*)?$/);
+      const m = href.match(hostRe);
       if (!m) return;
       const board = m[1];
       const rest = m[2] || '/';
@@ -2365,6 +2447,9 @@
           title.style.cssText = 'color:#aaa;margin-bottom:4px;';
           title.textContent = 'Cross-Hosted Board Map';
           map.appendChild(title);
+          const def = document.createElement('div');
+          def.textContent = `${DEFAULT_HOST}: every board not listed below`;
+          map.appendChild(def);
           const grouped = {};
           for (const [board, host] of Object.entries(BOARD_HOSTS)) {
             (grouped[host] ||= []).push(board);
