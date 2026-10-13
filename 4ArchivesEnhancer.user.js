@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         4chan Archives Enhancer
-// @version      0.98
+// @version      0.99
 // @namespace    4chan-archives-enhancer
 // @description  Enhancements for FoolFuuka 4chan archives (archived.moe, thebarchive.com, archiveofsins.com, desuarchive.org, 4plebs)
 // @license      MIT
@@ -37,7 +37,7 @@
 (function () {
   'use strict';
   // Deliberate boot log: single source of truth that the script was injected.
-  console.log('[4AE] v0.98 loaded on', location.href, 'readyState=', document.readyState);
+  console.log('[4AE] v0.99 loaded on', location.href, 'readyState=', document.readyState);
 
   // ═══════════════════════════════════════════════════════════════════════
   //  SETTINGS & STORAGE
@@ -46,7 +46,7 @@
   const SETTINGS_KEY = 'ffe_settings';
   const MD5_TRACK_KEY = 'ffe_tracked_md5s';
   const SAVED_THREADS_KEY = 'ffe_saved_threads';
-  const VERSION = '0.98';
+  const VERSION = '0.99';
 
   const DEFAULTS = {
     imageExpansion: true, fitWidth: true, fitHeight: true,
@@ -57,13 +57,13 @@
     quoteBacklinks: true, quoteThreading: true, threadQuotes: true,
     quotePreview: true, backlinkPosition: 'header', backlinkFormat: '>>%id', quoteHighlight: true,
 
-    goonMode: true,
+    imageOnlyMode: true,
     md5Tracking: true,
     savedThreads: true,
     boardNavEnabled: true, customBoardNav: '',
 
     batchDownload: true, batchDownloadDelay: 300,
-    keyboardNav: true, settingsKey: 'o', galleryKey: 'g', goonKey: 'f',
+    keyboardNav: true, settingsKey: 'o', galleryKey: 'g', imageOnlyKey: 'f',
     md5FilterKey: 'm',
 
     textSize: 'default',
@@ -108,7 +108,7 @@
     backlinkFormat:    { section: 'Quoting', label: 'Backlink Format',       desc: '%id = post number', type: 'text' },
     quoteHighlight:    { section: 'Quoting', label: 'Quote Highlighting',    desc: 'Highlight original post on hover' },
 
-    goonMode:         { section: 'General', label: 'Goon Mode',             desc: 'Toggle to hide non-image posts' },
+    imageOnlyMode:     { section: 'General', label: 'Image-Only Mode',       desc: 'Toggle to hide non-image posts' },
     md5Tracking:       { section: 'General', label: 'MD5 Tracking',          desc: 'Track and highlight posts by image MD5' },
     savedThreads:      { section: 'General', label: 'Saved Threads',         desc: 'Bookmark threads for quick access' },
     boardNavEnabled:   { section: 'General', label: 'Custom Board Nav',      desc: 'Custom board list at top of page' },
@@ -124,7 +124,7 @@
     keyboardNav:       { section: 'General', label: 'Keyboard Shortcuts',    desc: 'Enable keyboard shortcuts' },
     settingsKey:       { section: 'General', label: 'Settings Key',          desc: 'Key to open settings', type: 'text' },
     galleryKey:        { section: 'General', label: 'Gallery Key',           desc: 'Key to open gallery', type: 'text' },
-    goonKey:          { section: 'General', label: 'Goon Mode Key',          desc: 'Key to toggle Goon Mode', type: 'text' },
+    imageOnlyKey:      { section: 'General', label: 'Image-Only Mode Key',   desc: 'Key to toggle Image-Only Mode', type: 'text' },
     md5FilterKey:        { section: 'General', label: 'MD5 Filter Key',        desc: 'Key to toggle MD5 Filter Mode', type: 'text' },
 
     md5DropdownMenu:   { section: 'General', label: 'MD5 Dropdown Menu',     desc: 'Show the MD5 menu button on posts (requires MD5 Tracking)' },
@@ -146,8 +146,24 @@
     galSlideshowKey:   { section: 'Gallery', label: 'Gallery Slideshow Key', desc: 'Key to toggle slideshow (e.g. space)', type: 'text' },
   };
 
+  // Settings keys renamed in 0.99: new key → old key. Old values are carried over once, then dropped.
+  const LEGACY_SETTING_KEYS = { imageOnlyMode: 'g\u006fonMode', imageOnlyKey: 'g\u006fonKey' };
+  function migrateLegacySettings(saved) {
+    let changed = false;
+    for (const [newKey, oldKey] of Object.entries(LEGACY_SETTING_KEYS)) {
+      if (!(oldKey in saved)) continue;
+      if (!(newKey in saved)) saved[newKey] = saved[oldKey];
+      delete saved[oldKey]; changed = true;
+    }
+    return changed;
+  }
   function loadSettings() {
-    try { const r = GM_getValue(SETTINGS_KEY, '{}'); return { ...DEFAULTS, ...(typeof r === 'string' ? JSON.parse(r) : r) }; }
+    try {
+      const r = GM_getValue(SETTINGS_KEY, '{}');
+      const saved = (typeof r === 'string' ? JSON.parse(r) : r) || {};
+      if (migrateLegacySettings(saved)) GM_setValue(SETTINGS_KEY, JSON.stringify(saved));
+      return { ...DEFAULTS, ...saved };
+    }
     catch (e) { console.warn('[4AE] storage read failed for', SETTINGS_KEY, '— falling back to defaults:', e); return { ...DEFAULTS }; }
   }
   function saveSettings(s) { GM_setValue(SETTINGS_KEY, JSON.stringify(s)); }
@@ -243,15 +259,15 @@
     .ffe-threading-toggle { cursor: pointer; font-size: 12px; margin-left: 8px; user-select: none; }
     .ffe-threading-toggle input { vertical-align: middle; margin-right: 2px; }
 
-    /* Goon Mode */
-    :root.ffe-goonMode article.post.ffe-noimage { display: none; }
-    :root.ffe-goonMode .post_controls { display: none; }
-    .ffe-goon-indicator {
+    /* Image-Only Mode */
+    :root.ffe-imageOnly article.post.ffe-noimage { display: none; }
+    :root.ffe-imageOnly .post_controls { display: none; }
+    .ffe-imageonly-indicator {
       display: none; background: rgba(255,0,0,0.8); font-weight: bold;
       min-width: 9px; padding: 0 3px; margin: 0 4px; text-align: center;
       color: #fff; border-radius: 2px; cursor: pointer; font-size: 12px; line-height: 1.5;
     }
-    :root.ffe-goonMode .ffe-goon-indicator { display: inline-block; }
+    :root.ffe-imageOnly .ffe-imageonly-indicator { display: inline-block; }
 
     /* MD5 Filter Mode */
     :root.ffe-md5Filter article.post.ffe-md5-hidden { display: none; }
@@ -1202,20 +1218,20 @@
   };
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  6. GOON MODE
+  //  6. IMAGE-ONLY MODE
   // ═══════════════════════════════════════════════════════════════════════
 
-  const GoonMode = {
+  const ImageOnlyMode = {
     active: false, classified: false,
     init() {
-      if (!cfg.goonMode) return;
+      if (!cfg.imageOnlyMode) return;
       const t = document.querySelector('.letters') || document.querySelector('header') || document.querySelector('nav');
       if (!t) return;
-      const ind = document.createElement('span'); ind.className = 'ffe-goon-indicator'; ind.textContent = 'G';
-      ind.title = 'Goon Mode'; ind.addEventListener('click', () => this.toggle()); t.appendChild(ind);
+      const ind = document.createElement('span'); ind.className = 'ffe-imageonly-indicator'; ind.textContent = 'I';
+      ind.title = 'Image-Only Mode'; ind.addEventListener('click', () => this.toggle()); t.appendChild(ind);
     },
     classify() { if (this.classified) return; this.classified = true; document.querySelectorAll('article.post').forEach(a => { if (!a.querySelector('.thread_image_link')) a.classList.add('ffe-noimage'); }); },
-    toggle() { this.active = !this.active; if (this.active) this.classify(); doc.classList.toggle('ffe-goonMode', this.active); }
+    toggle() { this.active = !this.active; if (this.active) this.classify(); doc.classList.toggle('ffe-imageOnly', this.active); }
   };
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -2489,12 +2505,14 @@
           const data = JSON.parse(reader.result);
           // Support both old format (flat settings) and new format (with sections)
           if (data.settings) {
+            migrateLegacySettings(data.settings);
             Object.assign(cfg, {...DEFAULTS, ...data.settings}); saveSettings(cfg);
             if (data.trackedMD5s?.length) { trackedMD5s = new Set(data.trackedMD5s.map(normalizeMD5).filter(Boolean)); saveTrackedMD5s(); }
             if (data.savedThreads?.length) { savedThreadsList = data.savedThreads; saveSavedThreads(); }
             statusEl.textContent = 'Imported all data! Reload to apply.';
           } else {
             // Legacy: flat settings object
+            migrateLegacySettings(data);
             Object.assign(cfg, {...DEFAULTS, ...data}); saveSettings(cfg);
             statusEl.textContent = 'Imported settings! Reload to apply.';
           }
@@ -2730,7 +2748,7 @@
       const key = e.key.toLowerCase();
       if (key === cfg.settingsKey.toLowerCase()) { e.preventDefault(); document.getElementById('ffe-overlay') ? closeSettings() : openSettings(); return; }
       if (key === cfg.galleryKey.toLowerCase() && !document.getElementById('ffe-overlay')) { e.preventDefault(); Gallery.open(Gallery.findNearestIndex()); return; }
-      if (cfg.goonMode && key === cfg.goonKey.toLowerCase()) { e.preventDefault(); GoonMode.toggle(); return; }
+      if (cfg.imageOnlyMode && key === cfg.imageOnlyKey.toLowerCase()) { e.preventDefault(); ImageOnlyMode.toggle(); return; }
       if (cfg.md5Tracking && key === cfg.md5FilterKey.toLowerCase()) { e.preventDefault(); MD5Filter.toggle(); return; }
     });
   }
@@ -2748,7 +2766,7 @@
     const inits = [
       applyFitClasses, applyTextSize, addSettingsLink, initBoardNav,
       initImageExpansion, initImageHoverZoom, initQuotePreview, initBacklinks,
-      () => Threading.init(), () => GoonMode.init(), () => MD5Filter.init(),
+      () => Threading.init(), () => ImageOnlyMode.init(), () => MD5Filter.init(),
       initMD5Features, initSavedThreads, () => Gallery.init(),
       initViewOriginalBoard, initCrossArchiveRedirect,
       initFloatingPanel, initIndexCustomization, initKeyboardShortcuts,
@@ -2764,7 +2782,7 @@
         if (node.matches?.('article.thread, article.post')) { cachePost(node); if (cfg.md5Tracking) addMD5MenuButton(node); }
         node.querySelectorAll?.('article.thread, article.post').forEach(a => { cachePost(a); if (cfg.md5Tracking) addMD5MenuButton(a); });
       }
-      if (GoonMode.active) { GoonMode.classified = false; GoonMode.classify(); }
+      if (ImageOnlyMode.active) { ImageOnlyMode.classified = false; ImageOnlyMode.classify(); }
       if (MD5Filter.active) { MD5Filter.apply(); }
       if (cfg.md5Tracking) highlightTrackedPosts();
     });

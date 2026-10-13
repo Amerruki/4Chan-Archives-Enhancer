@@ -2,7 +2,7 @@
 
 Enhancements for FoolFuuka-based 4chan archives: archived.moe, thebarchive.com, archiveofsins.com, desuarchive.org and archive.4plebs.org.
 
-**Version:** 0.98
+**Version:** 0.99
 **License:** MIT
 
 ---
@@ -26,7 +26,7 @@ Enhancements for FoolFuuka-based 4chan archives: archived.moe, thebarchive.com, 
 - **MD5 Manager** — Bulk import/export, clear, and manage tracked hashes from settings.
 
 ### Content Modes
-- **Goon Mode** — Press `F` to hide all non-image posts.
+- **Image-Only Mode** — Press `F` to hide all non-image posts.
 
 ### Thread Management
 - **Saved Threads** — Bookmark threads via the heart icon. Cross-archive-aware links.
@@ -48,7 +48,7 @@ Enhancements for FoolFuuka-based 4chan archives: archived.moe, thebarchive.com, 
 - **Custom Board Nav** — Configurable board list with cross-archive links.
 - **Floating Panel** — Download button, collapse/expand controls, scroll arrows.
 - **Header Bar** — Settings, saved threads, and save/unsave toggle. Pin/unpin to auto-hide on scroll.
-- **Keyboard Shortcuts** — All configurable: `O` settings, `G` gallery, `F` goon mode, `M` MD5 filter, arrow keys gallery nav, `Esc` close.
+- **Keyboard Shortcuts** — All configurable: `O` settings, `G` gallery, `F` image-only mode, `M` MD5 filter, arrow keys gallery nav, `Esc` close.
 
 ### Display Options
 - Text size, thumbnail sizes (index and thread), gallery fit options.
