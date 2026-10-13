@@ -2,7 +2,7 @@
 
 Enhancements for the main 4Chan Archive sites (archived.moe, thebarchive.com, archiveofsins.com)
 
-**Version:** 0.9
+**Version:** 0.97
 **License:** MIT
 
 ---
@@ -58,9 +58,11 @@ Enhancements for the main 4Chan Archive sites (archived.moe, thebarchive.com, ar
 
 ## Installation
 
-1. Install [Userscripts](https://github.com/quoid/Userscripts) or [Tampermonkey](https://www.tampermonkey.net/)
-2. Create a new userscript and paste the contents of `4ArchivesEnhancer.user.js`
-3. Save and navigate to any supported archive site
+1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Userscripts](https://github.com/quoid/Userscripts)
+2. Open the raw script and your manager will offer to install it: [4ArchivesEnhancer.user.js](https://raw.githubusercontent.com/amerruki/4Chan-Archives-Enhancer/main/4ArchivesEnhancer.user.js)
+3. Navigate to any supported archive site
+
+Installed this way, the script updates itself: the header carries `@updateURL` and `@downloadURL` pointing at this repository, so each release lands without re-pasting. Pasting the file contents by hand still works but will not auto-update.
 
 ## Settings
 
