@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.98 (13/10/2026)
+
+- Archive host table is data plus a user override field (Settings → Routing → Board Host Overrides, `board=host` pairs, `board=default` undoes a built-in). Every place that assumed archived.moe now reads the table.
+- Saved-thread dropdown fills "Thread #N" placeholders with the real OP title from the archive's JSON API (`/_/api/chan/thread/`), a few per open, once per page load.
+- `@match` now also covers desuarchive.org and archive.4plebs.org. Untested there beyond the shared FoolFuuka markup; the override field is how you route boards to them.
+- `@connect` lists the archive hosts and their known media CDNs ahead of the `*` fallback, so those requests no longer prompt. The fallback stays because each archive's media host could not be verified from the audit environment.
+- Setting text for "View Original" now says what it does (links the hosting archive, not 4chan).
+
 ## 0.97 (13/10/2026)
 
 - Header: `@updateURL`, `@downloadURL`, `@homepageURL`, `@supportURL`. Installs from the raw file now auto-update.

@@ -1,8 +1,8 @@
 # 4chan Archives Enhancer
 
-Enhancements for the main 4Chan Archive sites (archived.moe, thebarchive.com, archiveofsins.com)
+Enhancements for FoolFuuka-based 4chan archives: archived.moe, thebarchive.com, archiveofsins.com, desuarchive.org and archive.4plebs.org.
 
-**Version:** 0.97
+**Version:** 0.98
 **License:** MIT
 
 ---
@@ -37,10 +37,12 @@ Enhancements for the main 4Chan Archive sites (archived.moe, thebarchive.com, ar
 ### Cross-Archive Routing
 - **Automatic Redirect** — Links to boards hosted on other archives are automatically redirected.
 - **View on Original Board** — Posts on archived.moe for cross-hosted boards get a link to the original archive.
-- **Board Mapping:**
+- **Board Mapping (built in):**
   - `/b/` → thebarchive.com
   - `/h/`, `/hc/`, `/hm/`, `/i/`, `/lgbt/`, `/r/`, `/s/`, `/soc/`, `/t/`, `/u/` → archiveofsins.com
   - Everything else → archived.moe
+- **Board Host Overrides** — Settings → Routing. `board=host` pairs, comma-separated, extend or undo the built-in map (e.g. `a=desuarchive.org, pol=archive.4plebs.org, b=default`). Board nav, saved threads, redirects and bulk import all follow the merged table.
+- **Saved thread titles from the API** — Threads added by URL or bulk import start as "Thread #N"; the saved-threads dropdown fills in the real OP title from the archive's JSON API.
 
 ### Navigation & UI
 - **Custom Board Nav** — Configurable board list with cross-archive links.
