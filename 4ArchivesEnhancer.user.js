@@ -2793,10 +2793,12 @@
     const target = document.querySelector('.thread, #thread, article.thread') || document.getElementById('main') || document.body;
     _ffeObserver.observe(target, { childList: true, subtree: true });
 
-    // Threading moves posts into nested containers after the browser has already scrolled to
-    // the #post anchor, so a jump link lands on the wrong post. Scroll to it again.
+    // Threading, backlinks and the top bar all shift layout after the browser has already
+    // scrolled to the #post anchor, so a jump link lands on the wrong post. Scroll to it again,
+    // except on back/forward, where the browser restores the reader's own position.
     const jump = location.hash.match(/^#p?(\d+)$/)?.[1];
-    if (jump && Threading.threaded) findPostArticle(jump)?.scrollIntoView({ block: 'start' });
+    const navType = performance.getEntriesByType?.('navigation')?.[0]?.type;
+    if (jump && navType !== 'back_forward') findPostArticle(jump)?.scrollIntoView({ block: 'start' });
   }
 
   // Bootstrap only once the document is fully parsed. Starting as soon as <body> exists (as
@@ -2826,6 +2828,9 @@
     }
     setTimeout(waitForParse, 100);
   }
+
+  // Fit and text-size classes only touch <html>, so apply them now rather than after the parse.
+  if (doc) { try { applyFitClasses(); applyTextSize(); } catch (_) {} }
 
   if (document.readyState !== 'loading') {
     tryBootstrap();
