@@ -2,7 +2,7 @@
 
 Enhancements for FoolFuuka-based 4chan archives: archived.moe, thebarchive.com, archiveofsins.com, desuarchive.org and archive.4plebs.org.
 
-**Version:** 0.99
+**Version:** 0.99.1
 **License:** MIT
 
 ---
