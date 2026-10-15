@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         4chan Archives Enhancer
-// @version      0.99
+// @version      0.99.1
 // @namespace    4chan-archives-enhancer
 // @description  Enhancements for FoolFuuka 4chan archives (archived.moe, thebarchive.com, archiveofsins.com, desuarchive.org, 4plebs)
 // @license      MIT
@@ -37,7 +37,7 @@
 (function () {
   'use strict';
   // Deliberate boot log: single source of truth that the script was injected.
-  console.log('[4AE] v0.99 loaded on', location.href, 'readyState=', document.readyState);
+  console.log('[4AE] v0.99.1 loaded on', location.href, 'readyState=', document.readyState);
 
   // ═══════════════════════════════════════════════════════════════════════
   //  SETTINGS & STORAGE
@@ -46,7 +46,7 @@
   const SETTINGS_KEY = 'ffe_settings';
   const MD5_TRACK_KEY = 'ffe_tracked_md5s';
   const SAVED_THREADS_KEY = 'ffe_saved_threads';
-  const VERSION = '0.99';
+  const VERSION = '0.99.1';
 
   const DEFAULTS = {
     imageExpansion: true, fitWidth: true, fitHeight: true,
@@ -619,7 +619,8 @@
   //  UTILITY
   // ═══════════════════════════════════════════════════════════════════════
 
-  const doc = document.documentElement;
+  // At document-start some managers inject before <html> exists; re-read at bootstrap.
+  let doc = document.documentElement;
   const isThreadPage = /\/thread\/\d+/.test(location.pathname);
   const isBoardIndex = /^\/[^/]+\/(page\/\d+\/?)?$/.test(location.pathname);
   const isGalleryOrSearch = !isThreadPage && !isBoardIndex; // gallery, search, etc.
@@ -2779,7 +2780,10 @@
     _ffeObserver = new MutationObserver((mutations) => {
       for (const m of mutations) for (const node of m.addedNodes) {
         if (node.nodeType !== 1) continue;
-        if (node.matches?.('article.thread, article.post')) { cachePost(node); if (cfg.md5Tracking) addMD5MenuButton(node); }
+        // An article can arrive empty and get its children in later records, so a node added
+        // inside a post also re-checks the post that holds it.
+        const host = node.closest?.('article.post') || (node.matches?.('article.thread') ? node : null);
+        if (host) { cachePost(host); if (cfg.md5Tracking) addMD5MenuButton(host); }
         node.querySelectorAll?.('article.thread, article.post').forEach(a => { cachePost(a); if (cfg.md5Tracking) addMD5MenuButton(a); });
       }
       if (ImageOnlyMode.active) { ImageOnlyMode.classified = false; ImageOnlyMode.classify(); }
@@ -2788,36 +2792,52 @@
     });
     const target = document.querySelector('.thread, #thread, article.thread') || document.getElementById('main') || document.body;
     _ffeObserver.observe(target, { childList: true, subtree: true });
+
+    // Threading, backlinks and the top bar all shift layout after the browser has already
+    // scrolled to the #post anchor, so a jump link lands on the wrong post. Scroll to it again,
+    // except on back/forward, where the browser restores the reader's own position.
+    const jump = location.hash.match(/^#p?(\d+)$/)?.[1];
+    const navType = performance.getEntriesByType?.('navigation')?.[0]?.type;
+    if (jump && navType !== 'back_forward') findPostArticle(jump)?.scrollIntoView({ block: 'start' });
   }
 
+  // Bootstrap only once the document is fully parsed. Starting as soon as <body> exists (as
+  // 0.96 to 0.99 did) ran every init against a half-parsed page on long threads: posts parsed
+  // afterwards had no MD5 menu button, no backlinks and no threading, and a #post jump link
+  // (which makes the browser paint early) made it near-certain.
   let bootstrapped = false;
   function tryBootstrap() {
     if (bootstrapped) return;
-    if (!document.body) return;
+    if (!document.body || document.readyState === 'loading') return;
     bootstrapped = true;
+    doc = document.documentElement;
     try { bootstrap(); }
     catch (e) { console.error('[4AE] bootstrap() threw — features may be partially loaded:', e); }
   }
-  // Indefinite body wait — never silently give up. Warns once at 10s.
-  const _bootStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  // Fallback poll in case DOMContentLoaded is missed (Safari/AdGuard slow path). setTimeout, not
+  // requestAnimationFrame, so it also runs in background tabs. Never gives up; warns once at 10s.
+  const _bootStart = Date.now();
   let _bootWarned = false;
-  function waitForBody() {
+  function waitForParse() {
     if (bootstrapped) return;
-    if (document.body) { tryBootstrap(); return; }
-    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    if (!_bootWarned && now - _bootStart > 10000) {
+    tryBootstrap();
+    if (bootstrapped) return;
+    if (!_bootWarned && Date.now() - _bootStart > 10000) {
       _bootWarned = true;
-      console.warn('[4AE] still waiting for document.body after 10s — Safari/AdGuard/network slow path');
+      console.warn('[4AE] page still parsing after 10s, waiting (readyState=' + document.readyState + ')');
     }
-    requestAnimationFrame(waitForBody);
+    setTimeout(waitForParse, 100);
   }
+
+  // Fit and text-size classes only touch <html>, so apply them now rather than after the parse.
+  if (doc) { try { applyFitClasses(); applyTextSize(); } catch (_) {} }
 
   if (document.readyState !== 'loading') {
     tryBootstrap();
   } else {
     document.addEventListener('DOMContentLoaded', tryBootstrap, { once: true });
     window.addEventListener('load', tryBootstrap, { once: true });
-    requestAnimationFrame(waitForBody);
+    setTimeout(waitForParse, 100);
   }
 
 })();

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.99.1 (15/10/2026)
+
+- Fixed: on long threads, and almost always when opening a link that jumps to a post (`/thread/N/#P`), posts lower in the thread had no MD5 menu button, no backlinks and were left out of quote threading. The script started as soon as the page body existed, while the thread was still loading; it now starts once the page has finished parsing. This bug predates 0.97.
+- After threading rearranges a thread, a post jump link scrolls to the right post again.
+- Startup no longer fails when the userscript manager injects before the page's root element exists (image expansion, fit and text-size classes, top bar padding).
+- A post that the page adds in pieces now still gets its MD5 menu button.
+
 ## 0.99 (13/10/2026)
 
 - The hide-non-image-posts display mode is now called Image-Only Mode everywhere: settings labels, the header indicator (now "I"), CSS classes and settings keys. Existing preferences and backups carry over on first load.
